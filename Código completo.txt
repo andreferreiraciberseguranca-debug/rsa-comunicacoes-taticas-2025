@@ -1,0 +1,55 @@
+# hybrid_secure_order.py ─ Implementação prática completa
+import os, time, statistics
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+# Mensagem operacional realista
+mensagem = b"""ORDEM OPERACIONAL CONFIDENCIAL
+ID: OP-2025-178
+De: PCGNR-Porto
+Para: Brigada Tráfico A23
+Coordenadas alvo: 39.603178, -7.909292
+Hora execução: 2025-12-15 23:45
+Instruções: Intercetar veículo matrícula 12-AB-34
+Prioridade: ALFA"""
+
+def teste_rsa(tamanho=2048):
+    tempos = []
+    for _ in range(1000):
+        inicio = time.perf_counter_ns()
+        
+        # 1. Geração de chaves (offline em HSM na vida real)
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=tamanho)
+        public_key = private_key.public_key()
+        
+        # 2. Assinatura RSA-PSS (não-repúdio)
+        signature = private_key.sign(
+            mensagem,
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+            hashes.SHA256()
+        )
+        
+        # 3. Troca de chave híbrida RSA-OAEP
+        aes_key = os.urandom(32)
+        encrypted_key = public_key.encrypt(
+            aes_key,
+            padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(), label=None)
+        )
+        
+        # 4. Cifragem final AES-256-GCM
+        aesgcm = AESGCM(aes_key)
+        nonce = os.urandom(12)
+        ciphertext = aesgcm.encrypt(nonce, mensagem, None)
+        
+        fim = time.perf_counter_ns()
+        tempos.append(fim - inicio)
+    
+    media_ns = statistics.mean(tempos)
+    return media_ns / 1e6  # ms
+
+# Exemplo de execução no Raspberry Pi 4
+if __name__ == "__main__":
+    print(f"RSA-2048 médio: {teste_rsa(2048):.2f} ms")
+    print(f"RSA-3072 médio: {teste_rsa(3072):.2f} ms")
